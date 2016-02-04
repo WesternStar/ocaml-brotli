@@ -27,13 +27,6 @@ using namespace brotli;
 
 extern "C" {
 
-  int output_callback(void *data, const uint8_t *buf, size_t count)
-  {
-    std::vector<uint8_t> *output = (std::vector<uint8_t> *)data;
-    output->insert(output->end(), buf, buf + count);
-    return (int)count;
-  }
-
   CAMLprim value brotli_ml_decompress_path(value file_dest, value this_barray)
   {
     CAMLparam2(file_dest, this_barray);
@@ -43,17 +36,12 @@ extern "C" {
     uint8_t *raw_data = (uint8_t*)Caml_ba_data_val(this_barray);
     // Since this is only 1 dimensional array, we only check the 0th entry.
     size_t size = Caml_ba_array_val(this_barray)->dim[0];
+    size_t output_size{};
 
-    BrotliMemInput memin;
-    BrotliInput in = BrotliInitMemInput(raw_data, size, &memin);
-    BrotliOutput out;
-    std::vector<uint8_t> output;
-
-    out.cb_ = &output_callback;
-    out.data_ = &output;
+    std::vector<uint8_t> output(size);
 
     caml_enter_blocking_section();
-    ok = BrotliDecompress(in, out);
+    ok = BrotliDecompressBuffer(size,raw_data,&output_size,output.data());
     caml_leave_blocking_section();
 
     raw_data = NULL;
@@ -62,7 +50,7 @@ extern "C" {
     case 1: {
       std::ofstream FILE(save_path, std::ofstream::binary | std::ofstream::out);
       std::copy(output.begin(),
-		output.end(),
+		output.begin() + output_size,
 		std::ostreambuf_iterator<char>(FILE));
       caml_stat_free(save_path);
       FILE.close();
@@ -95,21 +83,16 @@ extern "C" {
     int ok;
     uint8_t *raw_data = (uint8_t*)Caml_ba_data_val(this_barray);
     size_t size = Caml_ba_array_val(this_barray)->dim[0];
+    size_t output_size{};
 
-    BrotliMemInput memin;
-    BrotliInput in = BrotliInitMemInput(raw_data, size, &memin);
-    BrotliOutput out;
-    std::vector<uint8_t> output;
-
-    out.cb_ = &output_callback;
-    out.data_ = &output;
 
     caml_enter_blocking_section();
-    ok = BrotliDecompress(in, out);
+// see if blocking needed
+    ok = BrotliDecompressBuffer(size,raw_data,&output_size,output.data());
     caml_leave_blocking_section();
 
     long dims[0];
-    dims[0] = output.size();
+    dims[0] = output_size;
 
     raw_data = NULL;
     switch (ok) {
@@ -143,8 +126,8 @@ extern "C" {
     uint8_t *input = (uint8_t*)Caml_ba_data_val(this_barray);
     size_t length = Caml_ba_array_val(this_barray)->dim[0];
 
-    size_t output_length = 1.2 *  length + 10240;
-    uint8_t *output = new uint8_t[output_length];
+    size_t output_length{};
+    std::vector<uint8_t> output(size);
 
     BrotliParams params;
     params.mode = (BrotliParams::Mode)Int_val(Field(ml_params, 0));
@@ -152,27 +135,20 @@ extern "C" {
     params.lgwin = Int_val(Field(ml_params, 2));
     params.lgblock = Int_val(Field(ml_params, 3));
 
-    BrotliMemIn *n = new BrotliMemIn(input, length);
-    BrotliMemOut *o = new BrotliMemOut(output, output_length);
 
     caml_enter_blocking_section();
-    ok = BrotliCompress(params, n, o);
+    ok = BrotliCompressBuffer(params,length,input,&output_length,output.data());
     caml_leave_blocking_section();
 
-    delete n;
-    delete o;
-    input = NULL;
     if (ok) {
       std::ofstream FILE(save_path, std::ofstream::binary | std::ofstream::out);
-      std::copy(output,
-      		output + output_length,
+      std::copy(output.begin(),
+      		output.begin() + output_length,
       		std::ostreambuf_iterator<char>(FILE));
       FILE.close();
-      delete[] output;
       caml_stat_free(save_path);
       CAMLreturn(Val_unit);
     } else {
-      delete[] output;
       caml_stat_free(save_path);
       caml_failwith("Compression Error");
     }
@@ -187,8 +163,9 @@ extern "C" {
 
     uint8_t *input = (uint8_t*)Caml_ba_data_val(this_barray);
     size_t length = Caml_ba_array_val(this_barray)->dim[0];
-    size_t output_length = 1.2 *  length + 10240;
-    uint8_t *output = new uint8_t[output_length];
+    size_t output_length{};
+    std::vector<uint8_t> output(size);
+
 
     BrotliParams params;
     params.mode = (BrotliParams::Mode)Int_val(Field(ml_params, 0));
@@ -196,15 +173,11 @@ extern "C" {
     params.lgwin = Int_val(Field(ml_params, 2));
     params.lgblock = Int_val(Field(ml_params, 3));
 
-    BrotliMemIn *n = new BrotliMemIn(input, length);
-    BrotliMemOut *o = new BrotliMemOut(output, output_length);
 
     caml_enter_blocking_section();
-    ok = BrotliCompress(params, n, o);
+    ok = BrotliCompressBuffer(params,length,input,&output_length,output.data());
     caml_leave_blocking_section();
 
-    delete n;
-    delete o;
     input = NULL;
 
     long dims[0];
@@ -215,10 +188,8 @@ extern "C" {
 				  1,
 				  output,
 				  dims);
-      delete[] output;
       CAMLreturn(as_bigarray);
     } else {
-      delete[] output;
       caml_failwith("Compression Error");
     }
   }
